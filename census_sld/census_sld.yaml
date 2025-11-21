@@ -92,7 +92,7 @@ spec:
         command:
         - sh
         - -lc
-        - git clone --depth 1 "https://github.com/boettiger-lab/datasets.git" /workspace/datasets
+        - git clone --depth 1 "https://github.com/cassiebuhler/datasets.git" /workspace/datasets
         volumeMounts:
         - name: repo
           mountPath: /workspace
