@@ -1,0 +1,4 @@
+git+https://github.com/boettiger-lab/cng-python
+ibis==10.3.1
+requests==2.32.3
+geopandas==1.0.1
