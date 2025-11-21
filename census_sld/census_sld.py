@@ -110,16 +110,18 @@ def run_in_chunks(z, folder, df, args):
             offset = chunk_id * CHUNK_SIZE
             chunk = df.limit(CHUNK_SIZE, offset=offset)
             save_url = f"{folder}/chunk_{chunk_id:06d}.parquet"
-
-            try:
-                convert_to_h3(z, save_url, chunk, args)
-            except Exception as e:
-                print(f"Chunk {chunk_id} failed with chunk size {CHUNK_SIZE}: {e}")
-                if CHUNK_SIZE == MIN_CHUNK_SIZE:
-                    print(f"Chunk {chunk_id} cannot be processed even at MIN_CHUNK_SIZE. Skipping.")
-                    continue  # move on to next chunk
-                CHUNK_SIZE = max(CHUNK_SIZE // 2, MIN_CHUNK_SIZE)
-                break  # retry all chunks with smaller size
+            if minio_file_exists(save_url):
+                print(f'File already exists: {save_url}')
+            else:
+                try:
+                    convert_to_h3(z, save_url, chunk, args)
+                except Exception as e:
+                    print(f"Chunk {chunk_id} failed with chunk size {CHUNK_SIZE}: {e}")
+                    if CHUNK_SIZE == MIN_CHUNK_SIZE:
+                        print(f"Chunk {chunk_id} cannot be processed even at MIN_CHUNK_SIZE. Skipping.")
+                        continue  # move on to next chunk
+                    CHUNK_SIZE = max(CHUNK_SIZE // 2, MIN_CHUNK_SIZE)
+                    break  # retry all chunks with smaller size
         else:
             # All chunks succeeded
             return
@@ -142,17 +144,21 @@ def main():
     #get fips code for each state
     fips_url = 'https://www2.census.gov/geo/docs/reference/codes2020/national_state2020.txt'
     fips_codes = con.read_csv(fips_url).filter(_.STATE.notin(['AS','GU','MP','PR','UM','VI'])).select("STATEFP").execute().values.flatten().tolist()
-    
+    if chamber == 'lower':
+        fips_codes.remove('11') #DC doesn't have lower chamber
+        fips_codes.remove('31') #Nebrasks doesn't have lower chamber 
+        
     for state in fips_codes:
-            chamber_acronym = 'sldu' if chamber == 'upper' else 'sldl' #sldu for upper, sldl for lower 
-            save_url = f'{base_url}/{chamber}/z{z}/tl_2024_{state}_{chamber_acronym}_z{z}.parquet'
-            if not minio_file_exists(save_url):
-                print(f'Processing for {state}')
-                url = f'{base_url}/{chamber}/tl_2024_{state}_{chamber_acronym}.parquet'
-                df = con.read_parquet(url).mutate(geom = _.geom.convert('EPSG:4269','EPSG:4326'))
-                convert_to_h3(z, save_url, df, args)
-            else: 
-                print(f'File already exists for {state}')
+        chamber_acronym = 'sldu' if chamber == 'upper' else 'sldl' #sldu for upper, sldl for lower 
+        
+        save_url = f'{base_url}/{chamber}/z{z}/tl_2024_{state}_{chamber_acronym}_z{z}.parquet'
+        if not minio_file_exists(save_url):
+            print(f'Processing for {state}')
+            url = f'{base_url}/{chamber}/tl_2024_{state}_{chamber_acronym}.parquet'
+            df = con.read_parquet(url).mutate(geom = _.geom.convert('EPSG:4269','EPSG:4326'))
+            convert_to_h3(z, save_url, df, args)
+        else: 
+            print(f'File already exists for {state}')
         
 if __name__ == "__main__":
     main()
