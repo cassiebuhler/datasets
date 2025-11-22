@@ -8,33 +8,61 @@ from minio.error import S3Error
 from urllib.parse import urlparse
 import os
 import argparse
+from urllib.parse import urlparse
+from minio import Minio
+from minio.error import S3Error
+import os
 
-def minio_file_exists(s3_url):
+def minio_file_exists(s3_url, z=None):
     """
-    Check if an S3/MinIO file exists.
-    s3_url example: 's3://bucket/path/to/file.parquet'
+    Check whether an exact S3/MinIO file exists.
+    If not, check if the *folder* (prefix) exists.
+    Folder is derived by stripping `_z{z}.parquet` from the URL.
     """
-    key = os.getenv("MINIO_KEY")
-    secret = os.getenv("MINIO_SECRET")
+    access_key = os.getenv("MINIO_KEY")
+    secret_key = os.getenv("MINIO_SECRET")
 
-    # connect to minio
     client = Minio(
         "minio.carlboettiger.info",
-        access_key=key,
-        secret_key=secret,
-        secure=True  # change to False if you're not using HTTPS
+        access_key=access_key,
+        secret_key=secret_key,
+        secure=True
     )
+
     parsed = urlparse(s3_url)
     bucket = parsed.netloc
     key = parsed.path.lstrip("/")
+     
     try:
         client.stat_object(bucket, key)
         return True
     except S3Error as e:
-        if e.code == "NoSuchKey":
-            return False
+        if e.code not in ("NoSuchKey", "NotFound"):
+            raise  # unexpected error → rethrow
+
+    # if no file, check folder 
+    if z is None:
+        # No Z provided → cannot derive folder
         return False
 
+    # Build the folder prefix by removing `_z{z}.parquet`
+    suffix = f"_z{z}.parquet"
+    if key.endswith(suffix):
+        folder_prefix = key[: -len(suffix)]
+    else:
+        # fallback: split on suffix
+        folder_prefix = key.rsplit(suffix, 1)[0]
+
+    # Ensure prefix ends with '/'
+    if not folder_prefix.endswith("/"):
+        folder_prefix += "/"
+
+    # Check if any objects exist under that prefix
+    objects = client.list_objects(bucket, prefix=folder_prefix, recursive=False)
+    for _ in objects:
+        return True  # folder exists
+
+    return False
 
 def geom_to_cell(df, zoom=8, keep_cols=None):
     '''
@@ -79,7 +107,7 @@ def convert_to_h3(z, save_url, df, args):
             geom_to_cell(df, zoom=z) # convert geoms to h3
             .mutate(h8 = _.h3id.unnest())
             .mutate(h0 = h3_cell_to_parent(_.h8, 0))
-            .drop('h3id')
+            .drop('h3id','geom')
         )
         df_h3.to_parquet(save_url) #write to minio 
         print(f'Saved to {save_url}')
@@ -110,18 +138,15 @@ def run_in_chunks(z, folder, df, args):
             offset = chunk_id * CHUNK_SIZE
             chunk = df.limit(CHUNK_SIZE, offset=offset)
             save_url = f"{folder}/chunk_{chunk_id:06d}.parquet"
-            if minio_file_exists(save_url):
-                print(f'File already exists: {save_url}')
-            else:
-                try:
-                    convert_to_h3(z, save_url, chunk, args)
-                except Exception as e:
-                    print(f"Chunk {chunk_id} failed with chunk size {CHUNK_SIZE}: {e}")
-                    if CHUNK_SIZE == MIN_CHUNK_SIZE:
-                        print(f"Chunk {chunk_id} cannot be processed even at MIN_CHUNK_SIZE. Skipping.")
-                        continue  # move on to next chunk
-                    CHUNK_SIZE = max(CHUNK_SIZE // 2, MIN_CHUNK_SIZE)
-                    break  # retry all chunks with smaller size
+            try:
+                convert_to_h3(z, save_url, chunk, args)
+            except Exception as e:
+                print(f"Chunk {chunk_id} failed with chunk size {CHUNK_SIZE}: {e}")
+                if CHUNK_SIZE == MIN_CHUNK_SIZE:
+                    print(f"Chunk {chunk_id} cannot be processed even at MIN_CHUNK_SIZE. Skipping.")
+                    continue  # move on to next chunk
+                CHUNK_SIZE = max(CHUNK_SIZE // 2, MIN_CHUNK_SIZE)
+                break  # retry all chunks with smaller size
         else:
             # All chunks succeeded
             return
