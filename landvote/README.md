@@ -10,3 +10,7 @@ These are the steps:
 3. Join with political parties
 
 Steps 1-2 are in `preprocess_landvote.ipynb` and step 3 is in `add_political_parties.ipynb`.
+
+I also hexed the data at zoom 8. To run that, execute this in a terminal
+
+``python landvote_hex.py``
