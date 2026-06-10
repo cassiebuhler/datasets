@@ -1,8 +1,9 @@
 git+https://github.com/boettiger-lab/cng-python
 altair==5.3.0
 boto3==1.42.55
-duckdb==1.4.0
-ibis-framework==11.0.0
+duckdb==1.4.4
+ibis-framework==12.0.0
+ibis==3.3.0
 leafmap==0.53.3
 minio==7.2.15
 geoarrow-pandas==0.1.1
